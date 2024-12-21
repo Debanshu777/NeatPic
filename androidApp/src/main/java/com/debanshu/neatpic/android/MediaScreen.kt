@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,35 +48,54 @@ fun MediaScreen(
     onRequestPermission: () -> Unit
 ) {
     val uiState by viewModel.mediaState.collectAsStateWithLifecycle()
+    val countState by viewModel.totalState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    LaunchedEffect(true) {
+        viewModel.getTotalMediaCount()
+    }
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
     ) {
-        when (val state = uiState) {
-            is DataState.RequiresPermission -> {
-                PermissionRequest(
-                    onRequestPermission = onRequestPermission,
-                    onOpenSettings = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", "your.package.name", null)
+        Column {
+            when (val state = countState) {
+                is DataState.Success -> {
+                    Text(state.toString())
+                }
+
+                else -> {
+                    Text("Error")
+                }
+            }
+            when (val state = uiState) {
+                is DataState.RequiresPermission -> {
+                    PermissionRequest(
+                        onRequestPermission = onRequestPermission,
+                        onOpenSettings = {
+                            val intent =
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", "your.package.name", null)
+                                }
+                            context.startActivity(intent)
                         }
-                        context.startActivity(intent)
-                    }
-                )
-            }
-            is DataState.Error -> {
-                ErrorMessage(message = state.error)
-            }
-            is DataState.Loading -> {
-                LoadingIndicator()
-            }
-            is DataState.Success -> {
-                MediaGrid(mediaItems = state.data)
-            }
-            is DataState.Uninitialized -> {
-                // Nothing to show initially
+                    )
+                }
+
+                is DataState.Error -> {
+                    ErrorMessage(message = state.error)
+                }
+
+                is DataState.Loading -> {
+                    LoadingIndicator()
+                }
+
+                is DataState.Success -> {
+                    MediaGrid(mediaItems = state.data)
+                }
+
+                is DataState.Uninitialized -> {
+                    // Nothing to show initially
+                }
             }
         }
     }

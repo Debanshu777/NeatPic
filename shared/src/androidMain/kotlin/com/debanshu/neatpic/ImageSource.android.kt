@@ -90,14 +90,28 @@ actual class ImageSource(private val context: Context) {
         mediaItems: MutableList<MediaItem>
     ) {
         try {
-            val selection = "${MediaStore.MediaColumns.SIZE} > 0" // Only get existing files
+            val selection = StringBuilder().apply {
+                append("${MediaStore.MediaColumns.SIZE} > 0")
+
+                // Add mime type filter
+                append(" AND ")
+                append("${MediaStore.MediaColumns.MIME_TYPE} LIKE ?")
+            }.toString()
+
+            val selectionArgs = arrayOf(
+                when (type) {
+                    MediaType.IMAGE -> "image/%"
+                    MediaType.VIDEO -> "video/%"
+                }
+            )
+
             val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
             context.contentResolver.query(
                 contentUri,
                 projection,
                 selection,
-                null,
+                selectionArgs,
                 sortOrder
             )?.use { cursor ->
                 handleCursor(cursor, offset, limit, type, contentUri, mediaItems)
@@ -119,51 +133,83 @@ actual class ImageSource(private val context: Context) {
         contentUri: android.net.Uri,
         mediaItems: MutableList<MediaItem>
     ) {
-        // Move cursor to the offset position
-        if (offset > 0 && !cursor.moveToPosition(offset)) {
-            // If we can't move to offset, cursor is too small
-            return
-        }
+        try {
+            // Check if cursor is empty
+            if (cursor.count == 0) {
+                return
+            }
 
-        var itemsRetrieved = 0
-        do {
-            if (itemsRetrieved >= limit) break
+            // Move to first position
+            if (!cursor.moveToFirst()) {
+                return
+            }
 
-            try {
-                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
-                val name =
-                    cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME))
-                val dateAdded =
-                    cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED))
-                val mimeType =
-                    cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE))
+            // Skip offset items
+            var currentPosition = 0
+            while (currentPosition < offset && !cursor.isAfterLast) {
+                cursor.moveToNext()
+                currentPosition++
+            }
 
-                // Skip items with invalid mime types
-                if (mimeType == null || !isValidMimeType(mimeType, type)) {
+            // If we've moved past all items, return
+            if (cursor.isAfterLast) {
+                return
+            }
+
+            var itemsRetrieved = 0
+            do {
+                try {
+                    // Check if we've reached the limit
+                    if (itemsRetrieved >= limit) {
+                        break
+                    }
+
+                    // Get column indices once before the loop
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameColumn =
+                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val dateColumn =
+                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                    val mimeTypeColumn =
+                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+
+                    val id = cursor.getLong(idColumn)
+                    val name = cursor.getString(nameColumn)
+                    val dateAdded = cursor.getLong(dateColumn)
+                    val mimeType = cursor.getString(mimeTypeColumn)
+
+                    // Validate data
+                    if (name != null && mimeType != null && isValidMimeType(mimeType, type)) {
+                        val uri = ContentUris.withAppendedId(contentUri, id)
+
+                        // Verify the file exists and is readable
+                        if (isMediaAccessible(uri)) {
+                            mediaItems.add(
+                                MediaItem(
+                                    id = id.toString(),
+                                    uri = uri.toString(),
+                                    type = type,
+                                    dateAdded = dateAdded,
+                                    name = name,
+                                    mimeType = mimeType
+                                )
+                            )
+                            itemsRetrieved++
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    // Log the error and continue
+                    println("Error processing media item: ${e.message}")
+                    continue
+                } catch (e: Exception) {
+                    println("Unexpected error processing media item: ${e.message}")
                     continue
                 }
-
-                val uri = ContentUris.withAppendedId(contentUri, id)
-
-                // Verify the file exists and is readable
-                if (isMediaAccessible(uri)) {
-                    mediaItems.add(
-                        MediaItem(
-                            id = id.toString(),
-                            uri = uri.toString(),
-                            type = type,
-                            dateAdded = dateAdded,
-                            name = name,
-                            mimeType = mimeType
-                        )
-                    )
-                    itemsRetrieved++
-                }
-            } catch (e: IllegalArgumentException) {
-                // Skip items with missing columns
-                continue
-            }
-        } while (cursor.moveToNext())
+            } while (cursor.moveToNext() && itemsRetrieved < limit)
+        } catch (e: Exception) {
+            println("Error handling cursor: ${e.message}")
+            throw MediaLoaderException.CursorAccessException(e)
+        }
     }
 
     private fun isMediaAccessible(uri: android.net.Uri): Boolean {

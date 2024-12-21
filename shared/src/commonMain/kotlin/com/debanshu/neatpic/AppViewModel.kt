@@ -13,6 +13,9 @@ class AppViewModel(private val repository: MediaRepository) : ViewModel() {
     private val _mediaState = MutableStateFlow<DataState<List<MediaItem>>>(DataState.Uninitialized)
     val mediaState = _mediaState.asStateFlow()
 
+    private val _totalState = MutableStateFlow<DataState<Int>>(DataState.Uninitialized)
+    val totalState = _totalState.asStateFlow()
+
     fun getMedia() {
         viewModelScope.launch {
             repository.getMediaItems(page = 0)
@@ -34,6 +37,12 @@ class AppViewModel(private val repository: MediaRepository) : ViewModel() {
                 }.collect { items ->
                     _mediaState.tryEmit(DataState.Success(items))
                 }
+        }
+    }
+
+    fun getTotalMediaCount() {
+        viewModelScope.launch {
+            _totalState.emit(DataState.Success(repository.getTotalCount()))
         }
     }
 }
