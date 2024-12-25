@@ -38,6 +38,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.koin.core)
             implementation(libs.lifecycle.viewmodel)
+            implementation(libs.paging.common)
         }
         androidMain.dependencies {
             implementation(libs.koin.android)

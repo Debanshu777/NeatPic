@@ -153,28 +153,4 @@ actual class ImageSource {
     private fun PHAsset.isPNG(): Boolean {
         return this.mediaSubtypes == PHAssetMediaSubtypeNone
     }
-
-    actual suspend fun getTotalMediaCount(): Int {
-        when (PHPhotoLibrary.authorizationStatus()) {
-            PHAuthorizationStatusNotDetermined -> {
-                throw MediaLoaderException.InitializationException()
-            }
-
-            PHAuthorizationStatusRestricted,
-            PHAuthorizationStatusDenied -> {
-                throw MediaLoaderException.PermissionDeniedException()
-            }
-
-            else -> { /* Authorized, continue */
-            }
-        }
-
-        try {
-            val fetchOptions = PHFetchOptions()
-            val fetchResult = PHAsset.fetchAssetsWithOptions(fetchOptions)
-            return fetchResult.count.toInt()
-        } catch (e: Exception) {
-            throw MediaLoaderException.MediaAccessException(e)
-        }
-    }
 }

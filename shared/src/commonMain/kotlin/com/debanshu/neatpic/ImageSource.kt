@@ -5,5 +5,4 @@ import kotlinx.coroutines.flow.Flow
 
 expect class ImageSource {
     fun loadMediaItems(page: Int, pageSize: Int = 20): Flow<List<MediaItem>>
-    suspend fun getTotalMediaCount(): Int
 }

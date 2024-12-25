@@ -49,4 +49,6 @@ dependencies {
     implementation(libs.androidx.databinding.compiler)
     implementation(libs.coil.compose)
     debugImplementation(libs.compose.ui.tooling)
+    implementation("androidx.paging:paging-runtime:3.3.0-alpha02")
+    implementation("androidx.paging:paging-compose:3.3.0-alpha02")
 }

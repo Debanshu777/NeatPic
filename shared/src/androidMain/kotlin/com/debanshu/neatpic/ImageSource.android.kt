@@ -2,11 +2,9 @@ package com.debanshu.neatpic
 
 import android.content.ContentUris
 import android.content.Context
-import android.content.pm.PackageManager
 import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
-import androidx.core.content.ContextCompat
 import com.debanshu.neatpic.model.MediaItem
 import com.debanshu.neatpic.model.MediaType
 import kotlinx.coroutines.Dispatchers
@@ -16,13 +14,21 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
 actual class ImageSource(private val context: Context) {
+    private val permissionHandler = PermissionHandler(context)
+    private val imageContentUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore
+        .Images.Media
+        .getContentUri(MediaStore.VOLUME_EXTERNAL) else MediaStore.Images.Media
+        .EXTERNAL_CONTENT_URI
+    private val videoContentUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore
+        .Video.Media
+        .getContentUri(MediaStore.VOLUME_EXTERNAL) else MediaStore.Video.Media
+        .EXTERNAL_CONTENT_URI
+
     actual fun loadMediaItems(page: Int, pageSize: Int): Flow<List<MediaItem>> = flow {
-        // Validate input parameters
         if (page < 0) throw MediaLoaderException.InvalidPageException(page)
         if (pageSize <= 0) throw IllegalArgumentException("Page size must be positive")
 
-        // Check permissions first
-        if (!hasRequiredPermissions()) {
+        if (!permissionHandler.hasRequiredPermissions()) {
             throw MediaLoaderException.PermissionDeniedException()
         }
 
@@ -46,13 +52,12 @@ actual class ImageSource(private val context: Context) {
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.DATE_ADDED,
-                MediaStore.MediaColumns.SIZE, // Additional field to check if file exists
+                MediaStore.MediaColumns.SIZE,
                 MediaStore.MediaColumns.MIME_TYPE
             )
 
-            // Try to load images first
             tryQueryMedia(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                imageContentUri,
                 projection,
                 offset,
                 pageSize,
@@ -60,11 +65,10 @@ actual class ImageSource(private val context: Context) {
                 mediaItems
             )
 
-            // If we haven't filled the page with images, add videos
             if (mediaItems.size < pageSize) {
                 val remainingItems = pageSize - mediaItems.size
                 tryQueryMedia(
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    videoContentUri,
                     projection,
                     offset,
                     remainingItems,
@@ -73,7 +77,6 @@ actual class ImageSource(private val context: Context) {
                 )
             }
 
-            // If no media items found after both queries
             if (mediaItems.isEmpty() && page == 0) {
                 throw MediaLoaderException.NoMediaFoundException()
             }
@@ -92,8 +95,6 @@ actual class ImageSource(private val context: Context) {
         try {
             val selection = StringBuilder().apply {
                 append("${MediaStore.MediaColumns.SIZE} > 0")
-
-                // Add mime type filter
                 append(" AND ")
                 append("${MediaStore.MediaColumns.MIME_TYPE} LIKE ?")
             }.toString()
@@ -134,55 +135,40 @@ actual class ImageSource(private val context: Context) {
         mediaItems: MutableList<MediaItem>
     ) {
         try {
-            // Check if cursor is empty
             if (cursor.count == 0) {
                 return
             }
 
-            // Move to first position
             if (!cursor.moveToFirst()) {
                 return
             }
 
-            // Skip offset items
-            var currentPosition = 0
-            while (currentPosition < offset && !cursor.isAfterLast) {
-                cursor.moveToNext()
-                currentPosition++
-            }
+            cursor.moveToPosition(offset)
 
-            // If we've moved past all items, return
             if (cursor.isAfterLast) {
                 return
             }
 
             var itemsRetrieved = 0
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val nameColumn =
+                cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val dateColumn =
+                cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            val mimeTypeColumn =
+                cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
             do {
                 try {
-                    // Check if we've reached the limit
                     if (itemsRetrieved >= limit) {
                         break
                     }
-
-                    // Get column indices once before the loop
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                    val nameColumn =
-                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                    val dateColumn =
-                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
-                    val mimeTypeColumn =
-                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-
                     val id = cursor.getLong(idColumn)
                     val name = cursor.getString(nameColumn)
                     val dateAdded = cursor.getLong(dateColumn)
                     val mimeType = cursor.getString(mimeTypeColumn)
 
-                    // Validate data
                     if (name != null && mimeType != null && isValidMimeType(mimeType, type)) {
                         val uri = ContentUris.withAppendedId(contentUri, id)
-
-                        // Verify the file exists and is readable
                         if (isMediaAccessible(uri)) {
                             mediaItems.add(
                                 MediaItem(
@@ -198,7 +184,6 @@ actual class ImageSource(private val context: Context) {
                         }
                     }
                 } catch (e: IllegalArgumentException) {
-                    // Log the error and continue
                     println("Error processing media item: ${e.message}")
                     continue
                 } catch (e: Exception) {
@@ -216,7 +201,7 @@ actual class ImageSource(private val context: Context) {
         return try {
             context.contentResolver.openFileDescriptor(uri, "r")?.close()
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -226,54 +211,5 @@ actual class ImageSource(private val context: Context) {
             MediaType.IMAGE -> mimeType.startsWith("image/")
             MediaType.VIDEO -> mimeType.startsWith("video/")
         }
-    }
-
-    private fun hasRequiredPermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            checkPermission(android.Manifest.permission.READ_MEDIA_IMAGES) &&
-                    checkPermission(android.Manifest.permission.READ_MEDIA_VIDEO)
-        } else {
-            checkPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
-
-    private fun checkPermission(permission: String): Boolean {
-        return ContextCompat.checkSelfPermission(
-            context,
-            permission
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    actual suspend fun getTotalMediaCount(): Int {
-        if (!hasRequiredPermissions()) {
-            throw MediaLoaderException.PermissionDeniedException()
-        }
-
-        var totalCount = 0
-        try {
-            context.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.SIZE} > 0",
-                null,
-                null
-            )?.use { cursor ->
-                totalCount += cursor.count
-            }
-
-            context.contentResolver.query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.SIZE} > 0",
-                null,
-                null
-            )?.use { cursor ->
-                totalCount += cursor.count
-            }
-        } catch (e: Exception) {
-            throw MediaLoaderException.MediaAccessException(e)
-        }
-
-        return totalCount
     }
 }
